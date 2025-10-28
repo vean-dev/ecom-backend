@@ -1,185 +1,323 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require("bcrypt");
+const validator = require("validator");
 const User = require("../models/Users");
 const auth = require("../auth");
 const Product = require("../models/Products");
-const { transporter, sendEmail } = require('../nodemailer');
+const { transporter, sendEmail } = require("../nodemailer");
 
-//Check Email if Existing
-module.exports.checkEmailExist = (req,res) => {
-	if (req.body.email.includes("@")) {
-	  return User.find({ email: req.body.email })
-	    .then(result => {
-	      if (result.length > 0) {
-	        return res.status(409).send({ error: 'Duplicate Email Found' });
-	      } else {
-	        return res.status(404).send({ message: 'Email not found' });
-	      }
-	    })
-	    .catch(err => res.status(500).send({ error: 'Error in Find', details: err }));
-	} else {
-	  return res.status(400).send({ error: 'Bad Request', message: 'Invalid email format' });
-	}	
-};
+// This module is to create a user
+// For additional feature: send email confirmation for successful registration
+module.exports.registerUser = async (req, res) => {
+  try {
+    const { firstName, lastName, email, mobileNo, password, address } =
+      req.body;
 
-//Register User
-module.exports.registerUser = (req, res) => {
-    if (!req.body.email.includes("@")) {
-        return res.status(400).send({ error: 'Email invalid' });
-    } else if (req.body.mobileNo.length !== 11) {
-        return res.status(400).send({ error: 'Mobile number invalid' });
-    } else if (req.body.password.length < 8) {
-        return res.status(400).send({ error: 'Password must be at least 8 characters' });
-    } else {
-        let newUser = new User({
-            firstName: req.body.firstName,
-            lastName: req.body.lastName,
-            email: req.body.email,
-            mobileNo: req.body.mobileNo,
-            password: bcrypt.hashSync(req.body.password, 10)
-        });
-        return newUser.save()
-            .then(user => {
-                // Send welcome email to new user
-                const emailSubject = 'Welcome to Our App!';
-                const emailText = 'Thank you for registering with us.';
-                sendEmail(user.email, emailSubject, emailText);
-
-                return res.status(201).send({
-                    message: 'Registered successfully'
-                });
-            })
-            .catch(err => {
-                //console.error("Error in Save:", err);
-                return res.status(500).send({ error: "Error in Save" });
-            });
+    if (!firstName || !lastName || !email || !mobileNo || !password) {
+      return res
+        .status(400)
+        .json({ success: false, error: "All fields are required" });
     }
+
+    if (!validator.isEmail(email)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid email format" });
+    }
+
+    const mobilePattern = /^09\d{9}$/;
+    if (!mobilePattern.test(mobileNo)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid mobile number" });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: "Password must be at least 8 characters",
+      });
+    }
+
+    //Check if user already exists
+    const existingUser = await User.findOne({ $or: [{ email }, { mobileNo }] });
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        error: "Email or mobile number already registered",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create and save new user
+    const newUser = new User({
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      mobileNo,
+      password: hashedPassword,
+      address: address
+        ? {
+            street: address.street || "",
+            apartment: address.apartment || "",
+            zip: address.zip || "",
+            city: address.city || "",
+            country: address.country || "",
+          }
+        : undefined,
+    });
+
+    await newUser.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Registered successfully",
+    });
+  } catch (err) {
+    console.error("Error in registerUser:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
+  }
 };
 
 //User Log-In
-module.exports.loginUser = (req,res) => {
-	if(req.body.email.includes("@")){
-		return User.findOne({ email : req.body.email })
-		.then(result => {
-			if(result == null){
-				return res.status(404).send({ error: "No Email Found"});
+module.exports.loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-			} else {
-				const isPasswordCorrect = bcrypt.compareSync(req.body.password, result.password);
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
+    }
 
-				if (isPasswordCorrect) {
+    if (!email.includes("@")) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
+    }
 
-					return res.status(200).send({ access : auth.createAccessToken(result)});
+    const user = await User.findOne({ email }).lean();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found with this email",
+      });
+    }
 
-				} else {
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+    if (!isPasswordCorrect) {
+      return res.status(401).json({
+        success: false,
+        message: "Email and password do not match",
+      });
+    }
 
-					return res.status(401).send({ error: "Email and password do not match"});
+    const accessToken = auth.createAccessToken(user);
 
-				}
-
-			}
-
-		})
-		.catch(err => {
-			//console.error("Error in find:", err);
-			return res.status(500).send({ error: "Error in find"})
-		});
-
-	} else {
-		return res.status(400).send({ error: "Invalid in email"});
-	}	
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: { accessToken },
+    });
+  } catch (error) {
+    console.error("Login Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
 };
-
 
 //Get User Profile
-module.exports.getProfile = (req, res) => {
-	return User.findById(req.user.id)
-	.then(user => {
-		if (user) {
-			user.password = "";
-			return res.status(200).send({ user });
-		} else {
-			return res.status(404).send({ error: 'User not found'});
-		}
-
-	})
-	.catch(err => {
-		//console.error("Failed to fetch user profile:", err)
-		return res.status(500).send({ error: "Failed to fetch user profile"});
-	})
+module.exports.getUserProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+    res.status(200).json({
+      success: true,
+      message: "Retrieved user profile successfuly",
+      user,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch user profile" });
+  }
 };
-
-
 //Update User Profile
+
 module.exports.updateProfile = async (req, res) => {
   try {
-  	console.log(req.body);
-  	console.log(req.user);
-
     const userId = req.user.id;
+    const { firstName, lastName, mobileNo, email, address } = req.body;
 
-    const { firstName, lastName, mobileNo, email,  street, apartment, zip, city, country  } = req.body;
+    // --- 1. Input validation ---
+    if (email && !validator.isEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid email format",
+      });
+    }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { firstName, lastName, mobileNo, email, street, apartment, zip, city, country  },
-      { new: true }
-    );
+    if (mobileNo && !/^\d{11}$/.test(mobileNo)) {
+      return res.status(400).json({
+        success: false,
+        error: "Mobile number must be 11 digits",
+      });
+    }
 
-    res.send(updatedUser);
+    if (address && typeof address !== "object") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid address format",
+      });
+    }
+
+    // --- 2. Check for duplicate email (exclude self) ---
+    if (email) {
+      const existingUser = await User.findOne({ email, _id: { $ne: userId } });
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          error: "Email already in use",
+        });
+      }
+    }
+
+    // --- 3. Build update data safely ---
+    const updateData = {};
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+    if (mobileNo) updateData.mobileNo = mobileNo;
+    if (email) updateData.email = email;
+
+    if (address) {
+      updateData.address = {
+        street: address.street || "",
+        apartment: address.apartment || "",
+        zip: address.zip || "",
+        city: address.city || "",
+        country: address.country || "",
+      };
+    }
+
+    // --- 4. Update user ---
+    const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+      });
+    }
+
+    // --- 5. Return consistent response ---
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updatedUser,
+    });
   } catch (error) {
-    //console.error(error);
-    res.status(500).send({ message: 'Failed to update profile' });
+    //console.error("Update Profile Error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to update profile",
+    });
   }
-}
-
+};
 
 //Reset Password
 module.exports.resetPassword = async (req, res) => {
-    try {
-        const { newPassword } = req.body;
-        const { id } = req.user;
+  try {
+    const { newPassword } = req.body;
+    const { id } = req.user;
 
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-        await User.findByIdAndUpdate(id, { password: hashedPassword });
-
-        // Send notification to user's email
-        const emailSubject = 'Password Reset Confirmation';
-        const emailText = 'Your password has been successfully reset.';
-        sendEmail(req.user.email, emailSubject, emailText);
-
-        res.status(200).send({ message: 'Password reset successfully' });
-    } catch (error) {
-        //console.error(error);
-        res.status(500).send({ message: 'Internal server error' });
+    // Validation
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: "New password is required",
+      });
     }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: "Password must be at least 8 characters long",
+      });
+    }
+
+    // Optional: Add stronger validation
+    // const passwordRegex =
+    //   /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    // if (!passwordRegex.test(newPassword)) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     error:
+    //       "Password must include uppercase, lowercase, number, and special character",
+    //   });
+    // }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await User.findByIdAndUpdate(id, { password: hashedPassword });
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
+  }
 };
 
-//Update User As Admin(Admin Only)
 module.exports.updateAsAdmin = async (req, res) => {
-    const { userId } = req.body;
+  const { userId } = req.body;
 
-    try {
-        const isAdmin = req.user.isAdmin;
-
-        if (!isAdmin) {
-            return res.status(403).send({ message: 'Access denied. Only admin users can perform this action.' });
-        }
-
-        const userToUpdate = await User.findById(userId);
-
-        if (!userToUpdate) {
-            return res.status(404).send({ message: 'User not found' });
-        }
-
-        userToUpdate.isAdmin = true;
-
-        await userToUpdate.save();
-
-        res.status(200).send({ message: "User updated as admin successfully" });
-    } catch (error) {
-        //console.error(error);
-        res.status(500).send({ message: "Internal Server Error" });
+  try {
+    // Prevent self-update
+    if (req.user.id === userId) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot modify your own admin status.",
+      });
     }
-};
 
+    const userToUpdate = await User.findById(userId);
+
+    if (!userToUpdate) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
+    }
+
+    userToUpdate.isAdmin = true;
+    await userToUpdate.save();
+
+    res.status(200).json({
+      success: true,
+      message: "User updated as admin successfully.",
+      user: {
+        id: userToUpdate._id,
+        email: userToUpdate.email,
+        isAdmin: userToUpdate.isAdmin,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating user as admin:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error.",
+    });
+  }
+};

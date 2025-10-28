@@ -2,227 +2,142 @@ const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Product = require("../models/Products");
 
-module.exports.checkout = async function(req, res) {
-    try {
-        // Get user ID from request
-        const userId = req.user.id;
+module.exports.checkout = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { selectedItems } = req.body; // Optional array for selective checkout
 
-        // Retrieve user's cart and populate the productId field
-        const userCart = await Cart.findOne({ userId }).populate('cartItems.productId');
+    // Retrieve user's cart and populate product details
+    const cart = await Cart.findOne({ userId }).populate("cartItems.productId");
+    if (!cart) return res.status(404).json({ message: "Cart not found" });
 
-        if (!userCart) {
-            return res.status(404).send({ message: "Cart not found" });
-        }
+    // Determine which items to checkout
+    const itemsToCheckout = selectedItems?.length
+      ? cart.cartItems.filter((item) =>
+          selectedItems.some((sel) => item.productId._id.equals(sel.productId))
+        )
+      : cart.cartItems;
 
-        // Check if countInStock is enough for each product in the cart
-        for (const item of userCart.cartItems) {
-            const product = item.productId;
-            if (product.countInStock < item.quantity) {
-                return res.status(400).send({ message: `Not enough stock for ${product.name}` });
-            }
-        }
+    if (!itemsToCheckout.length)
+      return res
+        .status(400)
+        .json({ message: "No items selected for checkout" });
 
-        // Retrieve product ID and quantity from request body
-        const { productId, quantity } = req.body;
+    let totalPrice = 0;
+    const orderItems = [];
 
-        // Find the product by ID
-        const product = await Product.findById(productId);
+    // Validate stock and prepare order items
+    for (const item of itemsToCheckout) {
+      const product = item.productId;
+      const quantity =
+        selectedItems?.find((sel) => sel.productId === product._id.toString())
+          ?.quantity || item.quantity;
 
-        if (!product) {
-            return res.status(404).send({ message: `Product not found for ID: ${productId}` });
-        }
+      if (product.countInStock < quantity) {
+        return res
+          .status(400)
+          .json({ message: `Not enough stock for ${product.name}` });
+      }
 
-        // Check if countInStock is enough for the requested quantity
-        if (product.countInStock < quantity) {
-            return res.status(400).send({ message: `Not enough stock for ${product.name}` });
-        }
+      // Deduct stock
+      product.countInStock -= quantity;
+      await product.save();
 
-        // Create order item
-        const orderItem = {
-            product: productId,
-            quantity: quantity,
-            subtotal: quantity * product.price
-        };
+      const subtotal = product.price * quantity;
+      totalPrice += subtotal;
 
-        // Create order based on order item
-        const order = new Order({
-            userId: userId,
-            productsOrdered: [orderItem],
-            totalPrice: orderItem.subtotal
-        });
-
-        // Deduct countInStock for the product
-        product.countInStock -= quantity;
-        await product.save();
-
-        // Save order to database
-        await order.save();
-
-        res.status(201).send({ message: "Order created successfully", order: order });
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ error: 'Internal Server Error' });
+      orderItems.push({ product: product._id, quantity, subtotal });
     }
+
+    // Create the order
+    const order = await Order.create({
+      userId,
+      productsOrdered: orderItems,
+      totalPrice,
+    });
+
+    // Remove checked-out items from cart
+    cart.cartItems = cart.cartItems.filter(
+      (item) =>
+        !orderItems.some(
+          (ordered) =>
+            ordered.product.toString() === item.productId._id.toString()
+        )
+    );
+    cart.totalPrice = cart.cartItems.reduce((sum, i) => sum + i.subtotal, 0);
+    await cart.save();
+
+    return res
+      .status(201)
+      .json({ message: "Order created successfully", order });
+  } catch (error) {
+    console.error("Checkout error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 };
-
-
-
-
-module.exports.checkoutSelected = async function(req, res) {
-    try {
-        // Get user ID from request
-        const userId = req.user.id;
-
-        // Retrieve user's cart and populate the productId field
-        const userCart = await Cart.findOne({ userId }).populate('cartItems.productId');
-
-        if (!userCart) {
-            return res.status(404).send({ message: "Cart not found" });
-        }
-
-        const { selectedItems } = req.body;
-
-        // Validate selectedItems array
-        if (!Array.isArray(selectedItems)) {
-            return res.status(400).send({ message: "Invalid selected items" });
-        }
-
-        // Initialize variables to track total price and selected products
-        let totalPrice = 0;
-        let selectedProducts = [];
-
-        // Iterate through selectedItems array and validate each item
-        for (const selectedItem of selectedItems) {
-            const { productId, quantity } = selectedItem;
-            const cartItem = userCart.cartItems.find(item => item.productId.equals(productId));
-
-            // Check if the item is in the cart and the requested quantity is available
-            if (!cartItem || cartItem.quantity < quantity) {
-                return res.status(400).send({ message: `Invalid quantity for product with ID ${productId}` });
-            }
-
-            const product = cartItem.productId;
-
-            // Add selected product to selectedProducts array
-            selectedProducts.push({
-                product: productId,
-                quantity: quantity,
-                subtotal: quantity * product.price
-            });
-
-            // Update total price
-            totalPrice += quantity * product.price;
-        }
-
-        // Create order based on selected products
-        const order = new Order({
-            userId: userId,
-            productsOrdered: selectedProducts,
-            totalPrice: totalPrice
-        });
-
-        // Deduct countInStock for selected products
-        for (const selectedItem of selectedProducts) {
-            const { product: productId, quantity } = selectedItem;
-            const product = await Product.findById(productId);
-
-            if (!product || product.countInStock < quantity) {
-                return res.status(400).send({ message: `Not enough stock for product with ID ${productId}` });
-            }
-
-            product.countInStock -= quantity;
-            await product.save();
-        }
-
-        // Remove selected items from the user's cart
-        for (const selectedItem of selectedItems) {
-            const { productId, quantity } = selectedItem;
-            const cartItemIndex = userCart.cartItems.findIndex(item => item.productId.equals(productId));
-
-            if (cartItemIndex !== -1) {
-                userCart.cartItems[cartItemIndex].quantity -= quantity;
-                userCart.totalPrice -= quantity * userCart.cartItems[cartItemIndex].productId.price;
-
-                if (userCart.cartItems[cartItemIndex].quantity <= 0) {
-                    userCart.cartItems.splice(cartItemIndex, 1);
-                }
-            }
-        }
-
-        await userCart.save(); // Update user's cart
-
-        // Save order to database
-        await order.save();
-
-        res.status(201).send({ message: "Order created successfully", order: order });
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ error: 'Internal Server Error' });
-    }
-};
-
-
-
-
 
 // Controller to retrieve authenticated user's orders
 module.exports.getUserOrders = async (req, res) => {
-    try {
-        if (!req.user) {
-            return res.status(401).send({ error: 'Unauthorized' });
-        }
+  try {
+    const userOrders = await Order.find({ userId: req.user.id })
+      .populate("productsOrdered.product", "name price")
+      .lean();
 
-        const userId = req.user.id;
+    if (!userOrders.length)
+      return res.status(404).json({ message: "No orders found" });
 
-        const userOrders = await Order.find({ userId }).populate('productsOrdered.product');
-
-        res.status(200).send({ orders: userOrders });
-    } catch (error) {
-        console.error("Error in retrieving user's orders:", error);
-        res.status(500).send({ error: 'Internal Server Error' });
-    }
+    res.status(200).json({
+      success: true,
+      message: "Orders restrieved succesfuly",
+      orders: userOrders,
+    });
+  } catch (error) {
+    // console.error("Error fetching user orders:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 };
-
 // Controller to retrieve all orders (admin only)
 module.exports.getAllOrders = async (req, res) => {
-    try {
-        if (!req.user.isAdmin) {
-            return res.status(403).send({ message: "Access denied. Only admin users can perform this action." });
-        }
+  try {
+    const allOrders = await Order.find()
+      .populate("userId", "firstName lastName email")
+      .populate("productsOrdered.product", "name price")
+      .lean();
 
-        const allOrders = await Order.find().populate('productsOrdered.product');
-
-        res.status(200).send({ orders: allOrders });
-    } catch (error) {
-        console.error("Error in retrieving all orders:", error);
-        res.status(500).send({ error: 'Internal Server Error' });
-    }
+    res.status(200).json({
+      success: true,
+      message: "Orders restrieved succesfuly",
+      orders: allOrders,
+    });
+  } catch (error) {
+    console.error("Error fetching all orders:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 };
 
 // Controller function to update the status of an order
 module.exports.updateOrderStatus = async (req, res) => {
-    try {
-        // Get the order ID from request body
-        const orderId = req.body.id;
+  try {
+    const orderId = req.params.orderId; // Get order ID from URL params
+    const { status } = req.body; // New status from request body
 
-        // Find the order by ID
-        const order = await Order.findById(orderId);
+    console.log(orderId);
 
-        // Check if the order exists
-        if (!order) {
-            return res.status(404).send({ message: 'Order not found' });
-        }
-
-        // Update the order status
-        order.status = req.body.status;
-
-        // Save the updated order
-        await order.save();
-
-        // Send response
-        res.status(200).send({ message: 'Order status updated successfully', order });
-    } catch (error) {
-        //console.error('Error in updating order status:', error);
-        res.status(500).send({ error: 'Internal Server Error' });
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).send({ message: "Order not found" });
     }
+
+    order.status = status;
+    await order.save();
+
+    res.status(200).send({
+      success: true,
+      message: "Order status updated successfully",
+      order,
+    });
+  } catch (error) {
+    console.error("Error updating order status:", error);
+    res.status(500).send({ error: "Internal Server Error" });
+  }
 };

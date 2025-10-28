@@ -20,46 +20,38 @@ const port = 4005;
 const app = express();
 
 app.use(express.json());
-app.use(express.urlencoded({ extended : true }));
+app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
-
 //[Section] Google Login
-app.use(session({
-	secret: process.env.clientSecret,
-	resave: false,
-	saveUninitialized: false
-}));
+app.use(
+  session({
+    secret: process.env.CLIENT_SECRET,
+    resave: false,
+    saveUninitialized: false,
+  })
+);
 // Initializes the passport package when the application runs
 app.use(passport.initialize());
 
 // Creates a session using the passport package
 app.use(passport.session());
 
-
 // [Section] MongoDB Connection
-mongoose.connect("mongodb+srv://admin:admin123@capstone2.dw6qakx.mongodb.net/Demo-App?retryWrites=true&w=majority",
-		{
-			useNewUrlParser : true,
-			useUnifiedTopology : true
-		}
-);
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => console.log("Connected on Mongo Database"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
-mongoose.connection.once("open", () => console.log("Now connected to MongoDB Atlas"));
+app.use("/v1/users", userRoutes);
+app.use("/v1/products", productRoutes);
+app.use("/v1/cart", cartRoutes);
+app.use("/v1/orders", orderRoutes);
 
-app.use("/b5/users", userRoutes);
-app.use("/b5/products", productRoutes);
-app.use("/b5/cart", cartRoutes);
-app.use("/b5/orders", orderRoutes);
-
-
-if(require.main === module){
-
-	app.listen(process.env.PORT || port, () => {
-		console.log(`API is now online on port ${ process.env.PORT || port }`)
-	})
-
+if (require.main === module) {
+  app.listen(process.env.PORT || port, () => {
+    console.log(`API is now online on port ${process.env.PORT || port}`);
+  });
 }
 
-module.exports = { 	app, 
-					mongoose };
+module.exports = { app, mongoose };

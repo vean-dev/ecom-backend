@@ -1,210 +1,292 @@
-
 const Product = require("../models/Products");
 
 // Search Product by Name
 module.exports.searchProducts = async (req, res) => {
-    try {
-        const { productName } = req.body;
+  try {
+    const { productName } = req.body;
 
-        if (!productName) {
-            return res.status(400).send({ message: 'productName is required in the request body' });
-        }
-
-        const products = await Product.find({
-            name: { $regex: productName, $options: 'i' }
-        });
-
-        res.send(products);
-    } catch (error) {
-        res.status(500).send({ error: 'Internal Server Error' });
+    if (!productName) {
+      return res
+        .status(400)
+        .json({ message: "Product Name is required in the request body" });
     }
-};
 
-// Search Product by Price Range
-module.exports.searchProductsByPriceRange = async (req, res) => {
-    try {
-        const { minPrice, maxPrice } = req.body;
-
-        if (!minPrice || !maxPrice) {
-            return res.status(400).send({ error: 'Both minPrice and maxPrice are required' });
-        }
-
-        const results = await Product.find({ price: { $gte: minPrice, $lte: maxPrice } });
-
-        return res.status(200).send({ results });
-    } catch (error) {
-        //console.error('Error in product search by price range:', error);
-        return res.status(500).send({ error: 'Internal server error' });
-    }
-};
-
-
-//AddProduct
-module.exports.addProduct = (req, res) => {
-
-    try {
-
-        let newProduct = new Product({
-            name : req.body.name,
-            description : req.body.description,
-            price : req.body.price,
-            countInStock: req.body.countInStock
-
-        });
-
-        Product.findOne({ name: req.body.name })
-            .then(existingProduct => {
-                if(existingProduct){
-                    return res.status(409).send({ error: "Product already exist"})
-                }
-                return newProduct.save()
-                        .then(result => res.status(201).send({ result }))
-                        .catch(err => {
-                            //console.log("Error in saving the Product:", err);
-                            return res.status(500).send({ error: "failed to save the Product"})
-                        });
-            }).catch(err =>{
-                //console.error("Error in finding product: ",err);
-                return res.status(500).send({message: "Error in finding the product"});
-            })
-
-    } catch (err) {
-        //console.error("Error in finding product: ", err);
-        return res.status(500).send({ message: "Error in getting the variables" });
-    }
-    
-};
-
-
-//Get all Product
-module.exports.getAllProduct = (req, res) => {
-
-    return Product.find({})
-    .then(products => {
-        if(products.length > 0){
-            return res.status(200).send({ products });
-        }
-        else{
-            return res.status(200).send({ message: "No Product found." });
-        }
-
-    })
-    .catch(err => {
-        //console.error("Error in finding all Product", err);
-        return res.status(500).send({ error: "Error finding Product" });
-
+    const products = await Product.find({
+      name: { $regex: productName, $options: "i" },
     });
 
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+module.exports.searchProductsByPriceRange = async (req, res) => {
+  try {
+    let { minPrice, maxPrice } = req.body;
+
+    minPrice = parseFloat(minPrice);
+    maxPrice = parseFloat(maxPrice);
+
+    if (isNaN(minPrice) || isNaN(maxPrice)) {
+      return res.status(400).json({
+        success: false,
+        message: "minPrice and maxPrice must be valid numbers",
+      });
+    }
+
+    if (minPrice > maxPrice) {
+      return res.status(400).json({
+        success: false,
+        message: "minPrice cannot be greater than maxPrice",
+      });
+    }
+
+    const results = await Product.find({
+      price: { $gte: minPrice, $lte: maxPrice },
+      isActive: true,
+    });
+
+    if (!results.length) {
+      return res.status(200).json({
+        success: true,
+        message: "No products found within the specified price range.",
+        results: [],
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Products found within price range.",
+      results,
+    });
+  } catch (error) {
+    console.error("Error in product search by price range:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while searching products.",
+    });
+  }
+};
+
+// Add Products Module
+module.exports.addProduct = async (req, res) => {
+  try {
+    const { name, description, price, countInStock } = req.body;
+
+    if (!name || !description) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and description are required.",
+      });
+    }
+
+    if (price < 0 || countInStock < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Price and countInStock cannot be negative.",
+      });
+    }
+
+    const existingProduct = await Product.findOne({ name: name.trim() });
+    if (existingProduct) {
+      return res.status(409).json({
+        success: false,
+        message: "Product already exists.",
+      });
+    }
+
+    const newProduct = new Product({
+      name: name.trim(),
+      description,
+      price,
+      countInStock,
+    });
+
+    const savedProduct = await newProduct.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Product added successfully.",
+      data: savedProduct,
+    });
+  } catch (error) {
+    console.error("Error in addProduct:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+//Get all Product
+module.exports.getAllProduct = async (req, res) => {
+  try {
+    const products = await Product.find().lean();
+
+    if (!products.length) {
+      return res
+        .status(200)
+        .json({ success: true, message: "No product found." });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "All products retrieved",
+      products,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };
 
 //Get All Active Product
-module.exports.getAllActive = (req, res) => {
+module.exports.getAllActive = async (req, res) => {
+  try {
+    const products = await Product.find({ isActive: true }).lean();
 
-    Product.find({ isActive: true })
-    .then(products => {
-        if (products.length > 0){
-            return res.status(200).send({ products });
-        }
-        else {
-            return res.status(200).send({message: "There are no Product at the moment."})
-        }
-    })
-    .catch(err => res.status(500).send({ error: "Error in finding active Product"}));
-
+    if (!products.length) {
+      return res
+        .status(200)
+        .json({ success: true, message: "No product found." });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "All active products retrieved",
+      products,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };
 
 //Get Product
-module.exports.getProduct = (req, res) => {
-    Product.findById(req.params.productId)
-        .then(product => {
-            if (product) {
-                res.status(200).send({ product });
-            } else {
-                res.status(404).send({ error: 'Product not found' });
-            }
-        })
-        .catch(err => {
-            //console.log(err);
-            res.status(500).send({ error: 'Failed to fetch product' });
-        });
+module.exports.getProduct = async (req, res) => {
+  const product = await Product.findById(req.params.productId);
+
+  try {
+    if (!product) {
+      return res
+        .status(200)
+        .json({ success: true, message: "No product found." });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "Product retrieved",
+      product,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };
 
-
 //Update Product
-module.exports.updateProduct = (req, res)=>{
+module.exports.updateProduct = async (req, res) => {
+  const product = req.params.productId;
 
-    let productId = req.params.productId;
+  const updatedProductData = {
+    name: req.body.name,
+    description: req.body.description,
+    price: req.body.price,
+    countInStock: req.body.countInStock,
+  };
 
-    let updatedProduct = {
-        name: req.body.name,
-        description: req.body.description,
-        price: req.body.price,
-        countInStock: req.body.countInStock
+  try {
+    const updatedProduct = await Product.findByIdAndUpdate(
+      product,
+      updatedProductData,
+      {
+        new: true,
+      }
+    );
 
-
+    if (!updatedProduct) {
+      return res
+        .status(404)
+        .send({ success: false, message: "Product update failed" });
     }
-
-    return Product.findByIdAndUpdate(productId, updatedProduct, { new: true })
-    .then(product => {
-        if (product) {
-            res.status(200).send({ 
-                message: "Product updated successfully",
-                updatedProduct: product
-                });
-        } else {
-            res.status(404).send({ error: "failed to update product" });
-        }
-    })
-    .catch(err => {
-        //console.error("Error in updating product", err);
-        return res.status(500).send({ error: "Error in updating product"})
+    return res.status(200).send({
+      success: true,
+      message: "Product updated successfuly",
+      updatedProduct,
     });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 };
 
 //Archive Product
-module.exports.archiveProduct = (req, res) => {
+module.exports.archiveProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
 
-  let updateActiveField = {
-    isActive: false,
-  };
+    const archivedProduct = await Product.findByIdAndUpdate(
+      productId,
+      { isActive: false },
+      { new: true }
+    );
 
-  if(req.user.isAdmin == true){
+    if (!archivedProduct) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found.",
+      });
+    }
 
-    return Product.findByIdAndUpdate(req.params.productId, updateActiveField , { new: true })
-      .then((product) => {
-        if (product) {
-          res.status(200).send({ archiveProduct: { message: 'Product archived successfully', product } });
-        } else {
-          res.status(404).send({ error: 'Product not found' });
-        }
-      })
-      .catch((err) => res.status(500).send({ error: 'Failed to activate a product', details: err }));
-
-  } else {
-
-    return res.status(403).send({ error: 'Unauthorized', message: 'You do not have permission to archive a product' });
-
-  }
-
-};
-
-module.exports.activateProduct = (req, res) => {
-  let updateActiveField = {
-    isActive: true,
-  };
-
-  if (req.user.isAdmin == true) {
-    return Product.findByIdAndUpdate(req.params.productId, updateActiveField, { new: true })
-      .then((product) => {
-        if (product) {
-          res.status(200).send({ activateProduct: { message: 'Product activated successfully', product } });
-        } else {
-          res.status(404).send({ error: 'Product not found' });
-        }
-      })
-      .catch((err) => res.status(500).send({ error: 'Failed to activate a product', details: err }));
-  } else {
-    return res.status(403).send({ error: 'Unauthorized', message: 'You do not have permission to activate a product' });
+    return res.status(200).json({
+      success: true,
+      message: "Product archived successfully.",
+      product: archivedProduct,
+    });
+  } catch (error) {
+    // console.error("Error archiving product:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
   }
 };
 
+// Activating Products
+module.exports.activateProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const activatedProduct = await Product.findByIdAndUpdate(
+      productId,
+      { isActive: true },
+      { new: true }
+    );
+
+    if (!activatedProduct) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Product activated successfully.",
+      product: activatedProduct,
+    });
+  } catch (error) {
+    // console.error("Error activating product:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
