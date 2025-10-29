@@ -121,8 +121,8 @@ module.exports.loginUser = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Login successful",
-      data: { accessToken },
+      message: "Login successfully",
+      access: accessToken,
     });
   } catch (error) {
     console.error("Login Error:", error);
@@ -142,7 +142,7 @@ module.exports.getUserProfile = async (req, res) => {
     }
     res.status(200).json({
       success: true,
-      message: "Retrieved user profile successfuly",
+      message: "Retrieved user profile successfully",
       user,
     });
   } catch (error) {
