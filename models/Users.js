@@ -25,10 +25,12 @@ const userSchema = new mongoose.Schema({
   },
   address: {
     street: String,
-    apartment: String,
-    zip: String,
-    city: String,
+    barangay: String,
+    city_municipality: String,
+    province: String,
+    region: String,
     country: String,
+    postal_code: String,
   },
   isAdmin: {
     type: Boolean,

@@ -59,10 +59,12 @@ module.exports.registerUser = async (req, res) => {
       address: address
         ? {
             street: address.street || "",
-            apartment: address.apartment || "",
-            zip: address.zip || "",
-            city: address.city || "",
+            barangay: address.barangay || "",
+            city_municipality: address.city_municipality || "",
+            province: address.province || "",
+            region: address.region || "",
             country: address.country || "",
+            postal_code: address.postal_code || "",
           }
         : undefined,
     });
@@ -199,10 +201,12 @@ module.exports.updateProfile = async (req, res) => {
     if (address) {
       updateData.address = {
         street: address.street || "",
-        apartment: address.apartment || "",
-        zip: address.zip || "",
-        city: address.city || "",
+        barangay: address.barangay || "",
+        city_municipality: address.city_municipality || "",
+        province: address.province || "",
+        region: address.region || "",
         country: address.country || "",
+        postal_code: address.postal_code || "",
       };
     }
 
