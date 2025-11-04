@@ -9,7 +9,7 @@ module.exports.getUserCart = async (req, res) => {
     // Populate product info
     const cart = await Cart.findOne({ userId }).populate(
       "cartItems.productId",
-      "name price"
+      "name price description"
     );
 
     if (!cart) {
